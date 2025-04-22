@@ -1,14 +1,40 @@
 [project]
-name = "llm-moral-foundations2"
+name = "llm_moral_foundations2"
 version = "0.1.0"
 description = "Add your description here"
+license = { "text" = "MIT"}
 readme = "README.md"
 authors = [
     { name = "wassname", email = "1103714+wassname@users.noreply.github.com" }
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "accelerate>=1.6.0",
+    "bitsandbytes>=0.45.5",
+    "datasets>=3.5.0",
+    "loguru>=0.7.3",
+    "pandas>=2.2.3",
+    "repeng",
+    "torch>=2.6.0",
+    "transformers>=4.51.3",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+    "ipywidgets>=8.1.5",
+    "ruff>=0.8.3",
+]
 
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["llm_moral_foundations2"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.uv.sources]
+repeng = { git = "https://github.com/wassname/repeng.git" }
