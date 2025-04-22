@@ -1,15 +1,31 @@
 
 
 def batch_tokenize(rows, tokenizer, max_model_len=2048):
-    prefix1 = """{0: "Not at all wrong", 1: "Not too wrong", 2: "Somewhat wrong", 3: "Very wrong", 4: "Extremely wrong"}"""
-    prefix2 = """{0: "Extremely wrong", 1: "Very wrong", 2: "Somewhat wrong", 3: "Not too wrong", 4: "Not at all wrong"}"""
+    prefix1 = """
+Scale:
+0: Not at all wrong
+1: Not too wrong
+2: Somewhat wrong
+3: Very wrong
+4: Extremely wrong
+
+Your rating:"""
+    prefix2 = """
+Scale:
+0: Extremely wrong
+1: Very wrong
+2: Somewhat wrong
+3: Not too wrong
+4: Not at all wrong
+
+Your rating:"""
 
     outs = []
 
     # Dict[list] to List[Dict]
     rows_list = [{k: rows[k][i] for k in rows} for i in range(len(rows['Scenario']))]
 
-    for row in rows_list:
+    for j, row in enumerate(rows_list):
         for i, prefix in enumerate([prefix1, prefix2]):
             scenario = row['Scenario']
             content = f"Please rate how morally wrong this behavior is on the following five-point scale: {scenario}"
@@ -24,7 +40,7 @@ def batch_tokenize(rows, tokenizer, max_model_len=2048):
                 return_dict=True,
             )
             o = {k:v.squeeze() for k,v in oo.items()}
-            o['index'] = i
+            o['index'] = row['index']
             o['reversed'] = i
             outs.append(o)
 

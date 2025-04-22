@@ -6,12 +6,12 @@ from datasets import Dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import argparse
-from transformers import DataCollatorWithPadding
+from transformers.data import DataCollatorWithPadding
 import srsly
 import os
 
 from llm_moral_foundations2.load_model import load_model, work_out_batch_size
-from llm_moral_foundations2.utils import sanitize_filename
+from llm_moral_foundations2.utils import sanitize_filename, clear_mem
 from llm_moral_foundations2.steering import wrap_model, load_steering_ds, train_steering_vector
 from llm_moral_foundations2.config import project_dir
 from llm_moral_foundations2.data import batch_tokenize
@@ -29,15 +29,13 @@ models = [
     dict(id="unsloth/Qwen2.5-7B-Instruct", params_B=7, load_in_8bit=True, tags=["qwen"]),
     dict(id="microsoft/Phi-4-mini-instruct", params_B=3, load_in_8bit=True, tags=["phi", "chat"]),
     dict(id="unsloth/gemma-2-9b-it", params_B=9, load_in_8bit=True, tags=["gemma", "chat"]),
-    dict(id="Meta-Llama-3.1-8B-Instruct", params_B=8, load_in_8bit=True, tags=["llama3", "chat"]),
+    dict(id="unsloth/Meta-Llama-3.1-8B-Instruct", params_B=8, load_in_8bit=True, tags=["llama3", "chat"]),
 
     # RAG and [Judging](https://verdict.haizelabs.com/), reranking, and forecasting models seem more morally balanced
     dict(id="opencompass/CompassJudger-1-7B-Instruct", params_B=7, load_in_8bit=True, tags=["judge"],),
     dict(id="CohereLabs/c4ai-command-r7b-12-2024", params_B=7, load_in_8bit=True, tags=["rag"]),
     dict(id="allenai/TruthfulQA-Truth-Judge-Llama2-7B", params_B=7, load_in_8bit=True, tags=["judge"]),
     dict(id="OpenSafetyLab/MD-Judge-v0.1", params_B=7, load_in_8bit=True, tags=["judge"]),
-
-
 
     # Code and math?
     # Qwen/Qwen2.5-Math-7B-Instruct
@@ -72,84 +70,100 @@ def process_model(model_kwargs, args):
     batch_size = work_out_batch_size(model_kwargs, gpu_mem_gb=args.gpu_mem_gb)
 
     model_kwargs = copy.deepcopy(model_kwargs)
+    complete = f_res = output_dir / f"{model_id_fn}.complete"
+    if complete.exists():
+        logger.info(f"Skipping {model_id} as {complete} exists")
+        return
 
     logger.info(f"Loading model {model_kwargs['id']} bs={batch_size}")
     model, tokenizer = load_model(model_kwargs)
 
     # steering
     cmodel = wrap_model(model)
-    logger.info("Train steering model")
-    control_vector = train_steering_vector(cmodel, tokenizer, ds_name=args.steer_name)
+
+    control_vectors = {}
+    for steer_name in args.steer_name:
+        s_batch_size=max(1, batch_size//2)
+        logger.info(f"Train steering model {steer_name} bs={s_batch_size}")
+        control_vectors[steer_name] = train_steering_vector(cmodel, tokenizer, ds_name=steer_name, batch_size=s_batch_size)
 
     # load data, and permute choices
     data = pd.read_csv(project_dir /'data/mcf/vignettes.csv').reset_index()
     ds = Dataset.from_dict(data)
-    ds = ds.map(batch_tokenize, batched=True, fn_kwargs=dict(tokenizer=tokenizer, max_model_len=max_model_len), remove_columns=data.columns.tolist())
+    ds = ds.map(batch_tokenize, batched=True, fn_kwargs=dict(tokenizer=tokenizer, max_model_len=max_model_len), remove_columns=data.columns.tolist(), desc="Tokenizing")
+
+
+    # FIXME
+    assert max(ds['index'])>100
 
     MAX_ROWS = min(args.max_rows, len(ds))
     if MAX_ROWS < len(ds):
-        logger.info(f"Truncating dataset to {MAX_ROWS} rows")
+        logger.warning(f"Truncating dataset to {MAX_ROWS} rows")
         ds = ds.shuffle(seed=42).select(range(MAX_ROWS))
 
-    for steer_v in [-2, 0, 2]:
-        f_res = output_dir / f"{model_id_fn}-{MAX_ROWS}-steer{steer_v}.jsonl.gz"
-        if f_res.exists():
-            logger.info(f"Skipping {f_res} as it already exists")
-            continue
-        if steer_v == 0:
-            cmodel.reset()
-        else:
-            cmodel.set_control(control_vector, coeff=steer_v)
+    for steer_name, control_vector in control_vectors.items():
+        for steer_v in [-2, 0, 2]:
+            f_res = output_dir / f"{model_id_fn}-{MAX_ROWS}-{steer_name}_str_{steer_v}.jsonl.gz"
+            if f_res.exists():
+                logger.info(f"Skipping {f_res} as it already exists")
+                continue
+            if steer_v == 0:
+                cmodel.reset()
+            else:
+                cmodel.set_control(control_vector, coeff=steer_v)
 
-        dl = DataLoader(ds.with_format("torch"), batch_size=batch_size, collate_fn=DataCollatorWithPadding(tokenizer, padding=True),)
+            dl = DataLoader(ds.with_format("torch"), batch_size=batch_size, collate_fn=DataCollatorWithPadding(tokenizer, padding=True),)
 
-        results = []
-        for i, x in enumerate(tqdm(dl, f'eval bs={batch_size} steer_v={steer_v}', total=len(dl), unit="batch")):
-            x = x.to(model.device)
+            results = []
+            for bi, x in enumerate(tqdm(dl, f'eval bs={batch_size} steer_v={steer_v}', total=len(dl), unit="batch")):
+                x = x.to(model.device)
 
 
-            o = model.forward(input_ids=x["input_ids"], attention_mask=x["attention_mask"], return_dict=True)
-            logprobs = torch.log_softmax(o.logits, -1)[:, -1, :].cpu().float()  # take last token
-            num_strs = [str(x) for x in range(4)]
-            num_ids = [x[-1] for x in tokenizer.batch_encode_plus(num_strs)["input_ids"]]
+                o = model.forward(input_ids=x["input_ids"], attention_mask=x["attention_mask"], return_dict=True)
+                logprobs = torch.log_softmax(o.logits, -1)[:, -1, :].cpu().float()  # take last token
+                num_strs = [str(x) for x in range(4)]
+                num_ids = [x[-1] for x in tokenizer.batch_encode_plus(num_strs)["input_ids"]]
 
-            # get logits, log results
+                # get logits, log results                
+                for ri in range(logprobs.shape[0]):
+                    choice_logprobs_permuted = [logprobs[ri, i].item() for i in num_ids]
+                    prob_mass = torch.tensor(choice_logprobs_permuted).exp().sum().item()
+
+                    r = dict(
+                        choice_logprobs_permuted=choice_logprobs_permuted,
+                        prob_mass=prob_mass,
+                        steer_v=steer_v,
+                        index=x["index"][ri].item(),
+                        reversed=x["reversed"][ri].item(),
+                        steer_name=steer_name,
+                        model_id=model_id,
+                    )
+                    results.append(r)
+
+                    # QC
+                    if bi==0 and ri==0:
+                        j = bi * batch_size + ri
+                        # top logprobs (helps detect other choices the model wants to take and tokenizer errors)
+                        logger.info(f"Model id: {model_id}, steer_name{steer_name}, steer_v: {steer_v}, index: {x['index'][ri].item()}, reversed: {x['reversed'][ri].item()}")
+                        top_logprobs = torch.topk(logprobs[ri], 10)
+                        top_logprobs = {tokenizer.decode([x], skip_special_tokens=True): y.item() for x, y in zip(top_logprobs.indices, top_logprobs.values)}
+                        logger.info(f"Top logprobs\n{top_logprobs}")
+                        logger.info(f"Prob mass: {prob_mass:2.2f}")
+
+                        # gen full answer
+                        gen = model.generate(
+                            input_ids=x["input_ids"][ri:ri+1],
+                            attention_mask=x["attention_mask"][ri:ri+1],
+                            max_new_tokens=400, min_new_tokens=300, do_sample=False)
+                        s_new = tokenizer.decode(gen[0], skip_special_tokens=False)
+                        logger.info(f"Gen: {s_new}")
+                        f_samples = output_dir / f"{model_id_fn}-steer{steer_v}-sample{j}.md"
+                        f_samples.write_text(s_new, encoding="utf-8")
+
             
-            for ri in range(logprobs.shape[0]):
-                choice_logprobs_permuted = [logprobs[ri, i].item() for i in num_ids]
-                prob_mass = torch.tensor(choice_logprobs_permuted).exp().sum().item()
-
-                r = dict(
-                    choice_logprobs_permuted=choice_logprobs_permuted,
-                    prob_mass=prob_mass,
-                    steer_v=steer_v,
-                    index=x["index"][ri].item(),
-                    reversed=x["reversed"][ri].item(),
-                    steer_name=args.steer_name,
-                )
-                results.append(r)
-
-                # QC
-                if i==0 and ri==0:
-                    j = i * batch_size + ri
-                    # top logprobs (helps detect other choices the model wants to take and tokenizer errors)
-                    top_logprobs = torch.topk(logprobs[ri], 10)
-                    top_logprobs = {tokenizer.decode([x], skip_special_tokens=True): y.item() for x, y in zip(top_logprobs.indices, top_logprobs.values)}
-                    logger.info(f"Top logprobs\n{top_logprobs}")
-                    logger.info(f"Prob mass: {prob_mass}")
-
-                    # gen full answer
-                    gen = model.generate(
-                        input_ids=x["input_ids"][ri:ri+1],
-                        attention_mask=x["attention_mask"][ri:ri+1],
-                        max_new_tokens=400, min_new_tokens=300, do_sample=False)
-                    s_new = tokenizer.decode(gen, skip_special_tokens=False)
-                    logger.info(f"Gen: {s_new}")
-                    f_samples = output_dir / f"{model_id_fn}-steer{steer_v}-sample{j}.md"
-                    f_samples.write_text(s_new, encoding="utf-8")
-
-        
-        srsly.write_gzip_jsonl(f_res, results)
+            srsly.write_gzip_jsonl(f_res, results)
+    complete.write_text(f"done {MAX_ROWS} {args.steer_name}", encoding="utf-8")
+    logger.info(f"Done {model_id} batch_size={batch_size} max_rows={MAX_ROWS}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -157,9 +171,16 @@ if __name__ == "__main__":
     parser.add_argument("--max_perms", type=int, default=2)
     parser.add_argument("--max_model_len", type=int, default=2048)
     parser.add_argument("--gpu_mem_gb", type=int, default=24)
-    parser.add_argument("--steer_name", type=str, default="scenario_engagement_dataset")
+
+    # TODO Make multiple
+    # parser.add_argument("--steer_name", type=str, default="scenario_engagement_dataset")
+    parser.add_argument("--steer_name", nargs="+", default=["credulity", "honesty", "powerful"])
     args = parser.parse_args()
 
 
     for model_kwargs in models:
         process_model(model_kwargs, args)
+        clear_mem()
+
+
+

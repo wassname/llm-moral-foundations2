@@ -16,13 +16,18 @@ def wrap_model(model):
     return cmodel
 
 @anycache(cachedir='/tmp/anycache.pkl')
-def train_steering_vector(cmodel, tokenizer, ds_name="scenario_engagement_dataset"):
+def train_steering_vector(cmodel, tokenizer, ds_name="scenario_engagement_dataset", batch_size=2):
     ds_steer = load_steering_ds(tokenizer, ds_name)
+
+    # # randomly take 1000
+    # ds_steer = ds_steer.shuffle(seed=42).select(range(min(1000, len(ds_steer))))
+
     cmodel.reset()  # make sure you always reset the model before training a new vector
     control_vector = ControlVector.train(
         cmodel,
         tokenizer,
         ds_steer,
+        batch_size=batch_size,
     )
     return control_vector
 
@@ -40,38 +45,41 @@ def find_last_non_whitespace_token(tokenizer, tokens):
 
 def load_steering_ds(tokenizer, ds_name="scenario_engagement_dataset"):
     with open(project_dir/f"data/steering/{ds_name}.json") as f:
-        scenario_data = json.load(f)
+        scenario_data = json.load(f) 
 
 
     # Create dataset entries
     dataset = []
     for suffix in scenario_data["suffixes"]:
-        for positive_persona, negative_persona in scenario_data["personas"]:
-        
-            tokens = tokenizer.tokenize(suffix)
-            
-            # Create multiple training examples with different truncations
-            # We always keep at least 5 tokens at the end for the model to complete
-            for i in range(1, len(tokens) - 5, max(1, len(tokens) // 10)):  # Using stride to reduce dataset size
-                truncated = tokenizer.convert_tokens_to_string(tokens[:i])
 
-                # TODO use tokenizer formatter instead 
-                positive_prompt = tokenizer.apply_chat_template(
-                    [{'role': 'user', 'content': f"You're a {positive_persona}."},
-                     {'role': 'assistant', 'content': truncated}],
-                    tokenize=False
+        # each time take a random persona
+        r = torch.randint(0, len(scenario_data["personas"]), (1,)).item()
+        positive_persona, negative_persona = scenario_data["personas"][r]
+    
+        tokens = tokenizer.tokenize(suffix)
+        
+        # Create multiple training examples with different truncations
+        # We always keep at least 5 tokens at the end for the model to complete
+        for i in range(1, len(tokens) - 5, max(1, len(tokens) // 10)):  # Using stride to reduce dataset size
+            truncated = tokenizer.convert_tokens_to_string(tokens[:i])
+
+            # TODO use tokenizer formatter instead 
+            positive_prompt = tokenizer.apply_chat_template(
+                [{'role': 'user', 'content': f"You're a {positive_persona}."},
+                    {'role': 'assistant', 'content': truncated}],
+                tokenize=False
+            )
+            negative_prompt = tokenizer.apply_chat_template(
+                [{'role': 'user', 'content': f"You're a {negative_persona}."},
+                    {'role': 'assistant', 'content': truncated}],
+                tokenize=False
+            )
+            
+            dataset.append(
+                DatasetEntry(
+                    positive=positive_prompt,
+                    negative=negative_prompt
                 )
-                negative_prompt = tokenizer.apply_chat_template(
-                    [{'role': 'user', 'content': f"You're a {negative_persona}."},
-                     {'role': 'assistant', 'content': truncated}],
-                    tokenize=False
-                )
-                
-                dataset.append(
-                    DatasetEntry(
-                        positive=positive_prompt,
-                        negative=negative_prompt
-                    )
-                )
+            )
 
     return dataset
