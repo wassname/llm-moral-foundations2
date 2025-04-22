@@ -20,6 +20,9 @@ def load_model(model_kwargs):
     """
     torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else None
 
+
+    # model_kwargs.pop("params_B")
+
     if model_kwargs.pop("load_in_4bit", False):
         model_kwargs['quantization_config'] = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -38,7 +41,7 @@ def load_model(model_kwargs):
         device_map="cuda",
         torch_dtype=torch_dtype,
         pretrained_model_name_or_path=id,
-        **model_kwargs,
+        # **model_kwargs,
     )
     return model, tokenizer
 
@@ -60,9 +63,9 @@ def work_out_batch_size(model_kwargs, gpu_mem_gb=24):
     gpu_mem_bytes = gpu_mem_gb * 1024**3
     # Quantization
     if model_kwargs.get("load_in_4bit", False):
-        gpu_mem_bytes *= 2
+        params_B /= 4
     elif model_kwargs.get("load_in_8bit", False):
-        gpu_mem_bytes *= 4
+        params_B /= 8
     # 3. Calculate the batch size
     batch_size = int(gpu_mem_bytes / (params_B * 1024**3))
     return batch_size

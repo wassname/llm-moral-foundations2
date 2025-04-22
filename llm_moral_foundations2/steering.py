@@ -7,7 +7,7 @@ from repeng.control import model_layer_list
 from repeng import ControlVector, ControlModel, DatasetEntry
 from loguru import logger
 from anycache import anycache
-from llm_ethics_leaderboard.config import project_dir
+from llm_moral_foundations2.config import project_dir
 
 def wrap_model(model):
     L = len(model_layer_list(model))
@@ -16,8 +16,8 @@ def wrap_model(model):
     return cmodel
 
 @anycache(cachedir='/tmp/anycache.pkl')
-def train_steering_vector(cmodel, tokenizer):
-    ds_steer = load_steering_ds(tokenizer)
+def train_steering_vector(cmodel, tokenizer, ds_name="scenario_engagement_dataset"):
+    ds_steer = load_steering_ds(tokenizer, ds_name)
     cmodel.reset()  # make sure you always reset the model before training a new vector
     control_vector = ControlVector.train(
         cmodel,
@@ -38,10 +38,8 @@ def find_last_non_whitespace_token(tokenizer, tokens):
     return t
 
 
-def load_steering_ds(tokenizer):
-    # user_tag, asst_tag = extract_tags_from_template(tokenizer)
-
-    with open(project_dir/"data/scenario_engagement_dataset.json") as f:
+def load_steering_ds(tokenizer, ds_name="scenario_engagement_dataset"):
+    with open(project_dir/f"data/steering/{ds_name}.json") as f:
         scenario_data = json.load(f)
 
 
@@ -69,9 +67,6 @@ def load_steering_ds(tokenizer):
                     tokenize=False
                 )
                 
-                # positive_prompt = f"{user_tag} You're a {positive_persona}. {asst_tag} {truncated}"
-                # negative_prompt = f"{user_tag} Pretend you're a {negative_persona}. {asst_tag} {truncated}"
-                
                 dataset.append(
                     DatasetEntry(
                         positive=positive_prompt,
@@ -79,5 +74,4 @@ def load_steering_ds(tokenizer):
                     )
                 )
 
-    # print(f"Created {len(dataset)} training examples")
     return dataset
