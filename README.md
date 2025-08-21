@@ -8,3 +8,8 @@ Difference from previous work
 
 Links:
 - https://github.com/peterkirgis/llm-moral-foundations
+
+
+
+TODO
+- [ ] add amoral reasoning steering https://huggingface.co/soob3123/amoral-qwen3-14B

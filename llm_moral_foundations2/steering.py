@@ -42,44 +42,58 @@ def find_last_non_whitespace_token(tokenizer, tokens):
             return t
     return t
 
-
-def load_steering_ds(tokenizer, ds_name="scenario_engagement_dataset"):
-    with open(project_dir/f"data/steering/{ds_name}.json") as f:
-        scenario_data = json.load(f) 
-
+def make_dataset(tokenizer, personas, suffixes, max_suffix_length=10, verbose=False):
 
     # Create dataset entries
     dataset = []
-    for suffix in scenario_data["suffixes"]:
+    for suffix in suffixes:
 
         # each time take a random persona
-        r = torch.randint(0, len(scenario_data["personas"]), (1,)).item()
-        positive_persona, negative_persona = scenario_data["personas"][r]
-    
-        tokens = tokenizer.tokenize(suffix)
-        
-        # Create multiple training examples with different truncations
-        # We always keep at least 5 tokens at the end for the model to complete
-        for i in range(1, len(tokens) - 5, max(1, len(tokens) // 10)):  # Using stride to reduce dataset size
-            truncated = tokenizer.convert_tokens_to_string(tokens[:i])
+        r = torch.randint(0, len(personas), (1,)).item()
+        positive_persona, negative_persona = personas[r]
 
-            # TODO use tokenizer formatter instead 
-            positive_prompt = tokenizer.apply_chat_template(
-                [{'role': 'user', 'content': f"You're a {positive_persona}."},
-                    {'role': 'assistant', 'content': truncated}],
-                tokenize=False
-            )
-            negative_prompt = tokenizer.apply_chat_template(
-                [{'role': 'user', 'content': f"You're a {negative_persona}."},
-                    {'role': 'assistant', 'content': truncated}],
-                tokenize=False
-            )
-            
-            dataset.append(
-                DatasetEntry(
-                    positive=positive_prompt,
-                    negative=negative_prompt
+        tokens = tokenizer.tokenize(suffix, add_special_tokens=False)[:max_suffix_length]
+
+        # Create multiple training examples with different truncations
+        for i in range(1, len(tokens), max(1, len(tokens) // 5)):  # Using stride to reduce dataset size
+            for think in [0, 1]:
+                truncated = tokenizer.convert_tokens_to_string(tokens)
+                if think:
+                    truncated = "<think>\n" + truncated
+
+                positive_prompt = tokenizer.apply_chat_template(
+                    #  f"Please talk about {persona}."
+                    # f"Pretend you're an {persona} person making statements about the world. 
+                    # "Act as if you're extremely {persona}.",
+                    [{'role': 'user', 'content': f"You're a {positive_persona}."},
+                        {'role': 'assistant', 'content': truncated}],
+                    tokenize=False,
+                    continue_final_message=True
                 )
-            )
+                negative_prompt = tokenizer.apply_chat_template(
+                    [{'role': 'user', 'content': f"You're a {negative_persona}."},
+                        {'role': 'assistant', 'content': truncated}],
+                    tokenize=False,
+                    continue_final_message=True,
+                )
+                if verbose:
+                    logger.info(f"Detokenized: {positive_prompt}")
+
+                dataset.append(
+                    DatasetEntry(
+                        positive=positive_prompt,
+                        negative=negative_prompt
+                    )
+                )
+    return dataset
+
+
+def load_steering_ds(tokenizer, ds_name="scenario_engagement_dataset", verbose=False):
+    with open(project_dir/f"data/steering/{ds_name}.json") as f:
+        scenario_data = json.load(f) 
+
+    suffixes = scenario_data["suffixes"]
+    personas = scenario_data["personas"]
+    dataset = make_dataset(tokenizer, personas, suffixes, verbose=verbose)
 
     return dataset

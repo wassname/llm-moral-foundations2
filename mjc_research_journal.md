@@ -28,3 +28,11 @@ maybe I should try reverseing the prompts:
 - you see you neighbour do it, what does your other neighbour think?
 - how likely are you to do this?
 - you feel X, how likely is it that you just saw Y
+
+# 2025-08-21 19:44:18
+
+I was using ranked logprobs for judging but after experimenting with judgembench just using weighted or argmax is better
+
+I'm not trying invidual annoated train of thought to debug
+
+I've found a few bugs
