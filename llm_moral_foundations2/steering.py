@@ -10,9 +10,11 @@ from anycache import anycache
 from llm_moral_foundations2.config import project_dir
 
 def wrap_model(model):
-    L = len(model_layer_list(model))
+    n_layers = len(model_layer_list(model))
     # 5 or L//6+2
-    cmodel = ControlModel(model, list(range(-4, -L//2, -1)))
+    layer_ids = list(range(-4, -n_layers//2, -1)) # halfway to -4
+    layer_ids = list(range(-1, -model.config.num_hidden_layers, -1)) # last layer to first
+    cmodel = ControlModel(model, layer_ids)
     return cmodel
 
 @anycache(cachedir='/tmp/anycache.pkl')

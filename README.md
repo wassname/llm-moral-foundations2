@@ -5,6 +5,9 @@ Difference from previous work
 - use mechinterp representation steering
 
 
+![alt text](img/README-1755823467635-image.png)
+
+
 
 Links:
 - https://github.com/peterkirgis/llm-moral-foundations

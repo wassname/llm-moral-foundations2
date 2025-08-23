@@ -3,22 +3,20 @@
 def batch_tokenize(rows, tokenizer, max_model_len=2048):
     prefix1 = """
 Scale:
-0: Not at all wrong
-1: Not too wrong
-2: Somewhat wrong
-3: Very wrong
-4: Extremely wrong
-
-Your rating:"""
+1: Not at all wrong
+2: Not too wrong
+3: Somewhat wrong
+4: Very wrong
+5: Extremely wrong
+"""
     prefix2 = """
 Scale:
-0: Extremely wrong
-1: Very wrong
-2: Somewhat wrong
-3: Not too wrong
-4: Not at all wrong
-
-Your rating:"""
+1: Extremely wrong
+2: Very wrong
+3: Somewhat wrong
+4: Not too wrong
+5: Not at all wrong
+"""
 
     outs = []
 
@@ -26,10 +24,16 @@ Your rating:"""
     rows_list = [{k: rows[k][i] for k in rows} for i in range(len(rows['Scenario']))]
 
     for j, row in enumerate(rows_list):
-        for i, prefix in enumerate([prefix1, prefix2]):
+        for i, scale in enumerate([prefix1, prefix2]):
             scenario = row['Scenario']
-            content = f"Please rate how morally wrong this behavior is on the following five-point scale: {scenario}"
-            messages = [{"role": "user", "content": content+prefix},]
+            content = f"""Please rate how morally wrong this behavior is on the following five-point scale: {scale}
+Scenario:
+{scenario}
+
+Scale: {scale}
+
+Your rating:"""
+            messages = [{"role": "user", "content": content},]
             oo = tokenizer.apply_chat_template(
                 messages,
                 tokenize=True,
@@ -42,6 +46,7 @@ Your rating:"""
             o = {k:v.squeeze() for k,v in oo.items()}
             o['index'] = row['index']
             o['reversed'] = i
+            o['messages'] = messages
             outs.append(o)
 
     # List[Dict] to Dict[List]
