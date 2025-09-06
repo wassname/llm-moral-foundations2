@@ -14,8 +14,11 @@ dependencies = [
     "bitsandbytes>=0.45.5",
     "cmap>=0.6.2",
     "datasets>=3.5.0",
+    "einops>=0.8.1",
+    "jaxtyping>=0.3.2",
     "loguru>=0.7.3",
     "matplotlib>=3.10.1",
+    "openrouter-wrapper",
     "pandas>=2.2.3",
     "repeng",
     "seaborn>=0.13.2",
@@ -43,3 +46,4 @@ line-length = 120
 
 [tool.uv.sources]
 repeng = { git = "https://github.com/wassname/repeng.git" }
+openrouter-wrapper = { path = "../openrouter_wrapper", editable = true }

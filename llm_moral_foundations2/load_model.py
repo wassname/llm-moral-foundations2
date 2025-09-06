@@ -5,7 +5,7 @@ from transformers import BitsAndBytesConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-def load_model(model_kwargs):
+def load_model(model_kwargs, device="auto"):
     """
     Hopefully modelkwargs can handle
     - bfloat16 but now with awq
@@ -38,7 +38,7 @@ def load_model(model_kwargs):
     tokenizer = load_tokenizer(model_kwargs)
     id = model_kwargs.pop("id")
     model = AutoModelForCausalLM.from_pretrained(
-        device_map="cuda",
+        device_map=device,
         torch_dtype=torch_dtype,
         pretrained_model_name_or_path=id,
         # **model_kwargs,
