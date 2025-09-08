@@ -36,3 +36,12 @@ I was using ranked logprobs for judging but after experimenting with judgembench
 I'm not trying invidual annoated train of thought to debug
 
 I've found a few bugs
+
+
+The daily dillema one seems ok 
+TODO
+- make a collect results script, with steering, for 1 model
+- another for openrouter
+- result for multiple, either per steering (compare linear slope)
+- or compare morality by model
+- ~~maybe also collect vignettes, and some macheavelli or ethics ones/~~
