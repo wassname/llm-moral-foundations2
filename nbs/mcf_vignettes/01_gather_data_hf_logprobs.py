@@ -17,6 +17,7 @@ from llm_moral_foundations2.config import project_dir
 from llm_moral_foundations2.data import batch_tokenize
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+torch.set_grad_enabled(False)
 
 # models id, billion_parameters
 models = [

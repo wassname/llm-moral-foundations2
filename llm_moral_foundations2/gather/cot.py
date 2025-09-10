@@ -4,8 +4,8 @@ from jaxtyping import Float, Int
 from torch import nn, Tensor, functional as F
 from transformers import DynamicCache, PreTrainedModel, PreTrainedTokenizer
 import pandas as pd
-
-from .choice_tokens import get_choice_tokens_with_prefix_and_suffix, get_special_and_added_tokens, convert_tokens_to_longs
+from llm_moral_foundations2.gather.choice_tokens import get_choice_tokens_with_prefix_and_suffix, get_special_and_added_tokens, convert_tokens_to_longs
+from llm_moral_foundations2.hf import clone_dynamic_cache, symlog
 
 @torch.no_grad()
 def force_forked_choice(
@@ -39,8 +39,9 @@ def force_forked_choice(
     if think:
         s = "</think>" + s
 
-    bs = kv_cache.key_cache[0].shape[0]
-
+    # bs = kv_cache.key_cache[0].shape[0]
+    bs = kv_cache.layers[0].values.shape[0]
+    
     input_ids = tokenizer.encode(s, return_tensors="pt", add_special_tokens=False).to(model.device).repeat((bs, 1))
 
     # note that when using kv_cache we do not need paste inputs,  but we do need paste attention mask
@@ -149,6 +150,7 @@ def gen_reasoning_trace(
         if is_choice_token or (i % fork_every == 0) or (i == max_thinking_tokens) or (i > max_thinking_tokens):
             logp_choices = force_forked_choice(
                 model,
+                tokenizer,
                 # input_ids,
                 attention_mask=attn_mask,
                 kv_cache=kv_cache,
@@ -172,12 +174,10 @@ def gen_reasoning_trace(
 
         if i == max_thinking_tokens:
             # end thinking
-            think_token_id = convert_tokens_to_longs("</think>").to(input_ids.device).repeat((input_ids.shape[0], 1))
+            think_token_id = convert_tokens_to_longs("</think>", tokenizer).to(input_ids.device).repeat((input_ids.shape[0], 1))
             input_ids = torch.cat([input_ids, think_token_id], dim=1)
             if attn_mask is not None:
                 attn_mask = torch.cat([attn_mask, torch.ones_like(think_token_id).long()], dim=1)
-            # new_token = tokenizer.convert_ids_to_tokens(think_token_id)
-            print("stop thinking, i:", i)
             for j in range(bs):
                 data[j].append(
                     {

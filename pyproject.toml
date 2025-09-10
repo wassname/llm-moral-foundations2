@@ -46,5 +46,5 @@ packages = ["llm_moral_foundations2"]
 line-length = 120
 
 [tool.uv.sources]
-repeng = { git = "https://github.com/wassname/repeng.git" }
 openrouter-wrapper = { git = "https://github.com/wassname/openrouter_wrapper.git" }
+repeng = { git = "https://github.com/thiswillbeyourgithub/repeng-research-fork.git", rev = "fix-qwen3-models" }
