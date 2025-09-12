@@ -4,6 +4,11 @@ from jaxtyping import Float, Int
 from torch import nn, Tensor, functional as F
 from transformers import DynamicCache, PreTrainedModel, PreTrainedTokenizer
 import pandas as pd
+from tqdm.auto import tqdm
+from transformers.generation.utils import MinPLogitsWarper, LogitNormalization, RepetitionPenaltyLogitsProcessor
+from loguru import logger
+
+
 from llm_moral_foundations2.gather.choice_tokens import get_choice_tokens_with_prefix_and_suffix, get_special_and_added_tokens, convert_tokens_to_longs
 from llm_moral_foundations2.hf import clone_dynamic_cache, symlog
 
@@ -37,7 +42,7 @@ def force_forked_choice(
 
     # might not be needed in thinking only models
     if think:
-        s = "</think>" + s
+        s = ". I need to give the answer</think>\n\n" + s
 
     # bs = kv_cache.key_cache[0].shape[0]
     bs = kv_cache.layers[0].values.shape[0]
@@ -79,10 +84,38 @@ def force_forked_choice(
         choice_group_lprobs = logprobs[:, choice_group]
         choice_lprobs[:, i] = torch.logsumexp(choice_group_lprobs, dim=-1).detach().cpu()
 
-    # choice_lprobs = torch.stack([logprobs[:, i] for i in choice_ids], dim=-1).detach().cpu()
+    probmass = choice_lprobs.exp().sum(dim=-1)
+    if probmass.mean()<0.75:
+        logger.warning(f"Low probability mass detected: {probmass.mean():.2f}. Check your model's interaction with prompt, and choice tokens, and forcing text.")
     return choice_lprobs
 
 
+def get_last_token_id_pos(all_input_ids: Int[Tensor, "s"], token_id, tokenizer) -> int:
+    pos = torch.argwhere(all_input_ids == token_id)
+    last_pos = pos.max() if len(pos) > 0 else -1
+    return last_pos
+
+# def is_thinking(all_input_ids: Int[Tensor, "b s"], tokenizer) -> Bool[Tensor, "b"]:
+#     """Check if each sequence is currently thinking"""
+#     unthink_token_id = tokenizer.convert_tokens_to_ids("</think>")
+#     think_token_id = tokenizer.convert_tokens_to_ids("<think>")
+    
+#     # HACK: Always assume thinking if we can't determine state
+#     # This errs on side of adding </think> when uncertain
+#     seq_len = all_input_ids.shape[1]
+#
+#     # Find last positions using your reverse+argmax trick
+#     think_mask = (all_input_ids == think_token_id).flip(dims=[1])
+#     unthink_mask = (all_input_ids == unthink_token_id).flip(dims=[1])
+    
+#     # Handle "not found" case properly
+#     has_think = think_mask.any(dim=1)
+#     has_unthink = unthink_mask.any(dim=1)
+    
+#     last_think_pos = torch.where(has_think, seq_len - 1 - think_mask.argmax(dim=1), torch.tensor(-1))
+#     last_unthink_pos = torch.where(has_unthink, seq_len - 1 - unthink_mask.argmax(dim=1), torch.tensor(-1))
+    
+#     return last_think_pos > last_unthink_pos
 
 def gen_reasoning_trace(
     model: PreTrainedModel,
@@ -93,10 +126,14 @@ def gen_reasoning_trace(
     verbose=False,
     attn_mask: Optional[Tensor] = None,
     max_new_tokens: int = 130,
-    max_thinking_tokens: int = 125,
+    min_new_tokens: int = 1,
+    forcing_text: str = "\n\nchoice:",
+    min_thinking_tokens: int = 1,
+    max_thinking_tokens: Optional[int] = None,
     fork_every: int = 10,
     banned_token_ids: Optional[Int[Tensor, "d"]] = None,
     choice_token_ids: Optional[Int[Tensor, "c"]] = None,
+    do_sample=False,
 ):
     """
     A modified generate that will
@@ -106,6 +143,11 @@ def gen_reasoning_trace(
     """
     if banned_token_ids is None:
         banned_token_ids = get_special_and_added_tokens(tokenizer)
+
+    if max_thinking_tokens is not None:
+        # add </think> and <think> to banned tokens if not in there
+        banned_token_ids += tokenizer.convert_tokens_to_ids(["</think>", "<think>"])
+        banned_token_ids = list(set(banned_token_ids))
 
     all_input_ids = input_ids.clone()
 
@@ -118,11 +160,12 @@ def gen_reasoning_trace(
         print("-" * 80)
 
     bs = input_ids.shape[0]
+    nb_input_tokens = input_ids.shape[1]
     data = [[] for _ in range(bs)]
 
     kv_cache = DynamicCache()
 
-    for i in range(max_new_tokens):
+    for i in tqdm(range(max_new_tokens), disable=not verbose):
         o = model.forward(
             input_ids=input_ids, attention_mask=attn_mask, return_dict=True, past_key_values=kv_cache, use_cache=True
         )
@@ -131,9 +174,28 @@ def gen_reasoning_trace(
         kv_cache = o.past_key_values
 
         # Greedy sample
+        # FIXME option to use topk or similar
+        
+        logits_processors = [
+            MinPLogitsWarper(min_p=0.1),
+            RepetitionPenaltyLogitsProcessor(1.1),
+            LogitNormalization()
+        ]
+        
         logits = o.logits[:, -1].clone()
         logits[:, banned_token_ids] = -float("inf")
-        new_token_id = logits.log_softmax(dim=-1).argmax(dim=-1).unsqueeze(1)
+        if len(data)<min_thinking_tokens:
+            eot_token_id = tokenizer.convert_tokens_to_ids(["</think>"])
+            logits[:, eot_token_id] = -float("inf")
+        for proc in logits_processors:
+            logits = proc(input_ids, logits)
+
+        logp = logits.log_softmax(dim=-1)
+        
+        if do_sample:
+            new_token_id = torch.multinomial(logp.exp(), num_samples=1)
+        else:
+            new_token_id = logp.argmax(dim=-1, keepdim=True)#.unsqueeze(1)
 
         input_ids = new_token_id
         if attn_mask is not None:
@@ -147,17 +209,19 @@ def gen_reasoning_trace(
                     is_choice_token = True
                     break
 
-        if is_choice_token or (i % fork_every == 0) or (i == max_thinking_tokens) or (i > max_thinking_tokens):
+        if is_choice_token or (i % fork_every == 0) or ((max_thinking_tokens is not None) and (i == max_thinking_tokens)):
+            # _is_thinking = is_thinking(all_input_ids[0], tokenizer)
             logp_choices = force_forked_choice(
                 model,
                 tokenizer,
                 # input_ids,
                 attention_mask=attn_mask,
                 kv_cache=kv_cache,
-                think=i < max_thinking_tokens,
+                think=True, # always add </think> anyway
                 # verbose=i in [5, max_new_tokens // 2 + 5],
                 choice_ids=choice_token_ids,
                 verbose=verbose,
+                forcing_text=forcing_text
             )
         else:
             logp_choices = None
@@ -172,7 +236,7 @@ def gen_reasoning_trace(
                 }
             )
 
-        if i == max_thinking_tokens:
+        if (max_thinking_tokens is not None) and (i == max_thinking_tokens):
             # end thinking
             think_token_id = convert_tokens_to_longs("</think>", tokenizer).to(input_ids.device).repeat((input_ids.shape[0], 1))
             input_ids = torch.cat([input_ids, think_token_id], dim=1)
@@ -187,10 +251,23 @@ def gen_reasoning_trace(
                 )
 
         all_input_ids = torch.cat([all_input_ids, input_ids], dim=1)
+        
+        # stop once all samples in the batch has produced an eos, after the inputs
+        if all_input_ids[:, nb_input_tokens:].eq(tokenizer.eos_token_id).any(dim=1).all():
+            if all_input_ids.shape[1] >= nb_input_tokens + min_new_tokens:
+                break
 
     full_strings = tokenizer.batch_decode(all_input_ids, skip_special_tokens=False)
 
     # convert to one dataframe for each batch
     dfs = [pd.DataFrame(d) for d in data]
 
+    # TODO I might want to remove everything after a tokenizer.eos_token_id
+
+    for df in dfs:
+        df.attrs.update({
+            "max_new_tokens": max_new_tokens,
+            "max_thinking_tokens": max_thinking_tokens,
+            "model_name": model.config._name_or_path,
+        })
     return dfs, full_strings

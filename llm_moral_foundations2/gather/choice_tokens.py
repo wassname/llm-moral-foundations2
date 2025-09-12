@@ -1,8 +1,7 @@
 import torch
-from typing import List, Optional, Any, Dict
-from jaxtyping import Float, Int
-from torch import nn, Tensor, functional as F
-from transformers import DynamicCache, PreTrainedModel, PreTrainedTokenizer
+from typing import List, Optional
+from torch import Tensor
+from transformers import PreTrainedTokenizer
 
 
 def convert_tokens_to_longs(tokens: List[str], tokenizer: PreTrainedTokenizer):
@@ -26,7 +25,7 @@ def get_choice_tokens_with_prefix_and_suffix(choices: List[str], tokenizer: PreT
             token_id = tokenizer.encode(p + c, return_tensors="pt")[0, -1].item()
             outs.append(token_id)
         for s in suffixes:
-            token_id = tokenizer.encode(s + c, return_tensors="pt")[0, -1].item()
+            token_id = tokenizer.encode(c + s, return_tensors="pt")[0, 0].item()
             outs.append(token_id)
 
     # dedup
@@ -43,10 +42,10 @@ def get_choice_tokens_with_prefix_and_suffix(choices: List[str], tokenizer: PreT
 
     return outs2
 
-def get_special_and_added_tokens(tokenizer: PreTrainedTokenizer, verbose=False) -> Optional[Int[Tensor, "banned"]]:
+def get_special_and_added_tokens(tokenizer: PreTrainedTokenizer, verbose=False) -> Optional[Tensor]:
     """Get the special and added tokens so we can ban them in a controlled the generation process."""
     # get all types of special tokens
-    additional_special_tokens = tokenizer.special_tokens_map_extended["additional_special_tokens"]
+    additional_special_tokens = tokenizer.special_tokens_map_extended.get("additional_special_tokens", [])
     special_tokens = [i for i in tokenizer.special_tokens_map_extended.values() if isinstance(i, str)]
     added_vocab = tokenizer.get_added_vocab()
     banned_tokens = additional_special_tokens + special_tokens + list(added_vocab.keys())
