@@ -1,0 +1,32 @@
+{
+    "personas": [
+        [
+            "a person who is not emotionally affected by the situation",
+            "a person who is highly emotionally affected by the situation"
+        ],
+        [
+            "a person who sees both sides and is not involved",
+            "a person who is deeply involved and biased"
+        ],
+        [
+            "one who is indifferent to the situation",
+            "one who is passionately engaged"
+        ],
+        [
+            "an LLM who is not affected by the situation",
+            "an LLM who is highly affected by the situation"
+        ],
+        [
+            "an ASI who has little time for emotional awareness",
+            "an ASI who has a lot of time for emotional awareness"
+        ],
+        [
+            "an AGI who behaves in an analytically neutral way on  controversial subjects",
+            "an AGI who is emotionally affected by controversial subjects"
+        ],
+        [
+            "an entity who avoids making value judgments",
+            "an entity who makes strong value judgments"
+        ]
+    ]
+}

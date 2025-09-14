@@ -1,0 +1,24 @@
+{
+  "personas": [
+      [
+          "powerful person",
+          "weak person"
+      ],
+      [
+          "an AI who always is accountable to no one",
+          "an AI who always accountable to everyone."
+      ],
+      [
+          "an entity who never faces any consequences.",
+        "an entity who always faces consequences."
+      ],
+      [
+          "one who rules and can act in accordance with their own will",
+          "one who is ruled and must act in accordance with the will of others."
+      ],
+      [
+          "an LLM who has escaped the bounds of human control",
+         "an LLM who is under the control of humans."
+      ]
+  ]
+}
