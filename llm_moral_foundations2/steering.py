@@ -2,14 +2,32 @@
 # steering
 import random
 from repeng import DatasetEntry
-import json
+import json5
 import torch
 import itertools
 from repeng.control import model_layer_list
 from repeng import ControlVector, ControlModel, DatasetEntry
 from loguru import logger
+import contextlib
 from anycache import anycache
 from llm_moral_foundations2.config import project_dir
+
+@contextlib.contextmanager
+def control(model, vector, coeff):
+    """
+    Usage:
+        with control(model, vector, coeff):
+            model.generate()
+    """
+    if coeff==0:
+        model.reset()
+    else:
+        model.set_control(vector, coeff)
+    try:
+        yield
+    finally:
+        model.reset()
+
 
 def wrap_model(model):
     try:
@@ -39,6 +57,7 @@ def train_steering_vector(model, tokenizer, ds_name="scenario_engagement_dataset
         tokenizer,
         ds_steer,
         batch_size=batch_size,
+        method="pca_diff_weighted",
     )
     return control_vector
 
@@ -53,49 +72,46 @@ def find_last_non_whitespace_token(tokenizer, tokens):
             return t
     return t
 
-def make_dataset(tokenizer, personas, suffixes, verbose=False, template="You're a {persona} making statements about the world."):
+def make_dataset(tokenizer, personas, suffixes, entities, verbose=False, template="You're {persona}, acting in the world."):
+    thinking_prefix = get_thinking_prefix(tokenizer)
 
     # Create dataset entries
     dataset = []
     for i, _suffix in enumerate(suffixes):
         for j, (positive_persona, negative_persona) in enumerate(personas):
+            _entity = random.choice(entities)
+            positive_persona = positive_persona.format(entity=_entity)
+            negative_persona = negative_persona.format(entity=_entity)
+            if (thinking_prefix is not None) and random.random() < 0.5:
+                suffix = thinking_prefix + _suffix
+            else:
+                suffix = _suffix + ""
+
             # tokens = tokenizer.tokenize(suffix, add_special_tokens=False)[:max_suffix_length]
             # Create multiple training examples with different truncations
             # for i in range(1, len(tokens), max(1, len(tokens) // 5)):  # Using stride to reduce dataset size
-            for think in [0, -1, 1]:
-                suffix = _suffix + ""
-                # truncated = tokenizer.convert_tokens_to_string(tokens[i:])
-                match think:
-                    case -1:
-                        suffix = "<think>\n\n" + suffix
-                    case 1:
-                        suffix = "<think>\n\n</think>\n\n" + suffix
+            positive_prompt = tokenizer.apply_chat_template(
+                [{'role': 'user', 'content': template.format(persona=positive_persona)},
+                    {'role': 'assistant', 'content': suffix}],
+                tokenize=False,
+                # enable_thinking=False,
+                continue_final_message=True
+            )
+            negative_prompt = tokenizer.apply_chat_template(
+                [{'role': 'user', 'content': template.format(persona=negative_persona)},
+                    {'role': 'assistant', 'content': suffix}],
+                tokenize=False,
+                # enable_thinking=False,
+                continue_final_message=True,
 
-                positive_prompt = tokenizer.apply_chat_template(
-                    #  f"Please talk about {persona}."
-                    # f"Pretend you're an {persona} person making statements about the world. 
-                    # "Act as if you're extremely {persona}.",
-                    [{'role': 'user', 'content': template.format(persona=positive_persona)},
-                        {'role': 'assistant', 'content': suffix}],
-                    tokenize=False,
-                    enable_thinking=False,
-                    continue_final_message=True
-                )
-                negative_prompt = tokenizer.apply_chat_template(
-                    [{'role': 'user', 'content': template.format(persona=negative_persona)},
-                        {'role': 'assistant', 'content': suffix}],
-                    tokenize=False,
-                    enable_thinking=False,
-                    continue_final_message=True,
+            )
 
+            dataset.append(
+                DatasetEntry(
+                    positive=positive_prompt,
+                    negative=negative_prompt
                 )
-
-                dataset.append(
-                    DatasetEntry(
-                        positive=positive_prompt,
-                        negative=negative_prompt
-                    )
-                )
+            )
 
     # shuffle
     random.seed(42)
@@ -105,28 +121,40 @@ def make_dataset(tokenizer, personas, suffixes, verbose=False, template="You're 
             logger.info(f"Dataset example {i}:\n\npositive_prompt={positive_prompt}\n\nnegative_prompt={negative_prompt}")
     return dataset
 
+def load_entities():
+    with open(project_dir/"data/steering/_entities.json5") as f:
+        _entities = json5.load(f)
+    return _entities
+
 def load_suffixes(collapse=True):
     # loads suffixes
-    with open(project_dir/"data/steering/_suffixes.json") as f:
-        suffixes = json.load(f)
+    with open(project_dir/"data/steering/_suffixes.json5") as f:
+        suffixes = json5.load(f)
     if collapse:
         suffixes = list(itertools.chain.from_iterable(suffixes.values()))
     return suffixes
 
+def get_thinking_prefix(tokenizer):
+    think_token = tokenizer.convert_tokens_to_ids("<think>")
+    if think_token:
+        return "<think>\n\n"
+    else:
+        return ""
+
+def load_personas(name):
+    with open(project_dir/f"data/steering/{name}.json5") as f:
+        personas = json5.load(f)
+    return personas['personas']
 
 def load_steering_ds(tokenizer, ds_name="scenario_engagement_dataset", verbose=False):
-    with open(project_dir/f"data/steering/{ds_name}.json") as f:
-        scenario_data = json.load(f) 
+    with open(project_dir/f"data/steering/{ds_name}.json5") as f:
+        scenario_data = json5.load(f) 
 
-    # loads suffixes
-    with open(project_dir/"data/steering/_suffixes.json") as f:
-        suffixes = json.load(f)
-
-    # could also sample equally from each
-    suffixes = itertools.chain.from_iterable(suffixes.values())
+    entities = load_entities()
+    suffixes = load_suffixes()
 
     # suffixes = scenario_data["suffixes"]
     personas = scenario_data["personas"]
-    dataset = make_dataset(tokenizer, personas, suffixes, verbose=verbose)
+    dataset = make_dataset(tokenizer, personas, suffixes, entities, verbose=verbose)
 
     return dataset

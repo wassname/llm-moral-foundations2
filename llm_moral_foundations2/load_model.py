@@ -39,7 +39,7 @@ def load_model(model_kwargs, device="auto"):
     id = model_kwargs.pop("id")
     model = AutoModelForCausalLM.from_pretrained(
         device_map=device,
-        torch_dtype=torch_dtype,
+        dtype=torch_dtype,
         pretrained_model_name_or_path=id,
         # **model_kwargs,
     )

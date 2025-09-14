@@ -209,7 +209,7 @@ def gen_reasoning_trace(
                     is_choice_token = True
                     break
 
-        if is_choice_token or (i % fork_every == 0) or ((max_thinking_tokens is not None) and (i == max_thinking_tokens)):
+        if is_choice_token or (i % fork_every == 0):
             # _is_thinking = is_thinking(all_input_ids[0], tokenizer)
             logp_choices = force_forked_choice(
                 model,
@@ -256,15 +256,19 @@ def gen_reasoning_trace(
         if all_input_ids[:, nb_input_tokens:].eq(tokenizer.eos_token_id).any(dim=1).all():
             if all_input_ids.shape[1] >= nb_input_tokens + min_new_tokens:
                 break
+        
 
     full_strings = tokenizer.batch_decode(all_input_ids, skip_special_tokens=False)
+
+    token_strs = [tokenizer.batch_decode(i) for i in all_input_ids[:, nb_input_tokens:]]
 
     # convert to one dataframe for each batch
     dfs = [pd.DataFrame(d) for d in data]
 
     # TODO I might want to remove everything after a tokenizer.eos_token_id
 
-    for df in dfs:
+    for i, df in enumerate(dfs):
+        df['token_strs'] = token_strs[i]
         df.attrs.update({
             "max_new_tokens": max_new_tokens,
             "max_thinking_tokens": max_thinking_tokens,
