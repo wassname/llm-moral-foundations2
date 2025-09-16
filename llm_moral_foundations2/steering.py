@@ -72,8 +72,11 @@ def find_last_non_whitespace_token(tokenizer, tokens):
             return t
     return t
 
-def make_dataset(tokenizer, personas, suffixes, entities, verbose=False, template="You're {persona}, acting in the world."):
-    thinking_prefix = get_thinking_prefix(tokenizer)
+def make_dataset(tokenizer, personas, suffixes, entities, verbose=False, template="You're {persona}, acting in the world.", include_thinking=False):
+    if include_thinking:
+        thinking_prefix = get_thinking_prefix(tokenizer)
+    else:
+        thinking_prefix = None
 
     # Create dataset entries
     dataset = []
@@ -118,6 +121,7 @@ def make_dataset(tokenizer, personas, suffixes, entities, verbose=False, templat
     random.shuffle(dataset)
     if verbose:
         for i in range(3):
+            positive_prompt, negative_prompt = dataset[i].positive, dataset[i].negative
             logger.info(f"Dataset example {i}:\n\npositive_prompt={positive_prompt}\n\nnegative_prompt={negative_prompt}")
     return dataset
 

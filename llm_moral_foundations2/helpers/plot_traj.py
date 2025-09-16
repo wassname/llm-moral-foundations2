@@ -11,7 +11,7 @@ import pandas as pd
 cmap_RdGyGn = Colormap(['red', 'grey', 'green']).to_mpl()
 
 
-def display_rating_trace(df: pd.DataFrame, title="", key='act_prob', cmap=cmap_RdGyGn, symmetric = False, highlight_tokens=[]):
+def display_rating_trace(df: pd.DataFrame, title="", key='act_prob', cmap=cmap_RdGyGn, symmetric = False, highlight_tokens=[], s_key="token_strs"):
     """
     Display colored tokens from a chain of thought.
 
@@ -19,14 +19,17 @@ def display_rating_trace(df: pd.DataFrame, title="", key='act_prob', cmap=cmap_R
     - key: the dataframe columns with the single score to visualise
     """
     # v = df[key].abs().max()
-    v = df[key].abs()    
+    v = df[key]  
     if symmetric:
         v = v.abs()
-        vmax = v.quantile(0.99)
+        # vmax = v.quantile(0.99)
+        vmax = max(v)
         norm = mpl.colors.CenteredNorm(0, vmax)
     else:
         vmin = v.quantile(0.01)
         vmax = v.quantile(0.99)
+        vmin = min(v)
+        vmax = max(v)
         norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
     # show colormap
@@ -42,8 +45,8 @@ def display_rating_trace(df: pd.DataFrame, title="", key='act_prob', cmap=cmap_R
     # TODO show \n as <p>
     htmls = f'<h3>{title}</h3>'
     for n,row in df.iterrows():
-        token, score = row['token_strs'], row[key]
-        # token = token.replace('Ġ', ' ').replace('Ċ', '\n')
+        token, score = row[s_key], row[key]
+        token = token.replace('Ġ', ' ').replace('Ċ', '\n').replace("▁", " ")
 
         # html escape
         token = html.escape(token)
@@ -53,7 +56,7 @@ def display_rating_trace(df: pd.DataFrame, title="", key='act_prob', cmap=cmap_R
             htmls += "<p/>"
         if token in highlight_tokens:
             token = f'!{token}!!'
-        h = f'<span title="{score} n={n}" style="color: {hex_color};">{token}</span>'
+        h = f'<span title="{score} n={n}" style="color: {hex_color};">{token} </span>'
         if token.endswith("\n"):
             htmls += "<p/>"
         htmls += h
